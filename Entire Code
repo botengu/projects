@@ -1,0 +1,252 @@
+import sys
+import scipy
+import csv
+import numpy as np 
+import matplotlib.pyplot as plt
+import math    
+import visvis as vv
+
+from math import atan, factorial as fac
+from skimage import measure
+from numpy import sin, cos, sinh, cosh,arcsin,arccos, pi, exp,abs
+from visvis import Point, Pointset
+from scipy.spatial import Voronoi, voronoi_plot_2d, distance
+
+nelx = 60
+nely = 30 
+thres = 0.5 # 50% 
+depth = 1
+min_ms = 1 
+
+axes = vv.gca()
+
+def Choose(n,k): 
+    return  fac(n)/ fac(k) / fac( n - k )
+
+def create_line(pt1,pt2): 
+    l = Pointset(3)
+    l.append(pt1);l.append(pt2); 
+    vv.Line(axes,l)
+
+class nBezier(object):
+    def __init__(self, points):
+        self.points = np.array(points).astype(np.float32)
+
+    def at(self, t):
+        pt = 0 
+        n= len(self.points)
+        for k in range(n): 
+            pt +=  Choose(n-1,k) * (1-t)**(n-1-k) * t**k * self.points[k]
+        return pt
+
+def closest_node(node, nodes):
+    return np.min(distance.cdist([node], nodes))
+
+def BezCurv(list_,pts):
+    # Create list of breps
+    brep = [] 
+    for i in range(len(list_)):
+        array = [] 
+        for j in range(len(list_[i])):
+            array.append([pts[list_[i][j],0],pts[list_[i][j],1],0])
+
+        # Creating the bezier curve
+        Curve  = nBezier(array)
+
+        t = np.linspace(0,1,10) 
+        list_of_pts = Pointset(3)
+        for  item in t:
+            list_of_pts.append(Point(Curve.at(item)))
+
+        print(list_of_pts)
+        #vv.Line(axes,list_of_pts)
+
+# Open the densities 
+densities = []
+
+with open('C:\\Users\\AdminSi\\Desktop\\Masters\\OptOsezua\\densities.csv') as csvfile:
+    readCSV = csv.reader(csvfile)
+    for row in readCSV:
+        for i in row:
+            densities.append(float(i))     
+
+# Interpret the indexing 
+# Only create boxes when the density is above the threshold  
+
+pixels = np.reshape(densities, (nelx, nely)).T
+
+# Creating the right 
+pts_list = []
+count =0  
+for i in range(nelx+1):
+    for j in range(nely+1):
+        pts_list.insert(count,[i,j])
+        count = count+1 
+
+# Find which nodes correspond to which element 
+elem_nodes = []
+
+count= 0 
+for elx in range(nelx):
+    for ely in range(nely): 
+        n1 = (nely+1)*(elx)+ely 
+        n2 = (nely+1)* (elx+1)  +ely
+        elem_nodes.insert(count,[elx, ely, n1, n1+1, n2, n2+1])
+        count=count+1 
+
+elem_nodes = np.array(elem_nodes)
+X = elem_nodes[:,2:5]  
+densities = np.array(densities)
+
+count = 0 
+pts_list = np.array(pts_list)
+
+contour_pts = [] 
+
+for i in range(len(pts_list)):
+    # Find all the elements which have point i 
+    idx = np.where(X == i)[0] 
+    # Find densities of those elements        
+    px = pixels[elem_nodes[idx,1], elem_nodes[idx,0]]
+    dens_ls = px[px>thres]
+    if(len(dens_ls) != 0 and len(dens_ls)<=2):       
+        contour_pts.insert(count,i)  
+        count = count+1  
+
+        
+# Create Voronoi Diagram  
+vor = Voronoi(pts_list[contour_pts,:])
+
+edges  = np.array(vor.ridge_vertices)
+pts = vor.vertices 
+
+# From voronoi to medial axis  
+edges = edges[np.all(edges != -1, axis=1)]
+
+for i in range(len(pts)):  
+    x = math.floor(pts[i,0]) 
+    y = math.floor(pts[i,1])
+    # Remove points outside domain 
+    if(x<0 or x>=nelx or y<0 or y>=nely): 
+        # Find the edge that has the point 
+        edges = edges[np.all(edges !=i, axis=1)]
+    else: 
+        curr_px = pixels[y,x]
+        if curr_px < thres :
+            edges = edges[np.all(edges !=i, axis=1)] 
+
+# Find degree of all points 
+dgree = []   
+for i in range(len(pts)): 
+    dgree.insert(i, np.count_nonzero(edges ==i ))
+    
+    
+
+
+# Remove \"hairs\" from the medial axis 
+
+for i in range(len(pts)): # i is the coordinate of the point to add
+    if dgree[i] == 1: # Only selects points with degree one (leaves)
+        o=0  # the degree of the target point 
+        target=i # current or next point 
+        edge_pts = []  
+        edge_pts.insert(0,i )
+        count_ep = 1 
+        ms =0 
+        soli_pts = [] 
+        count_sp = 0 
+        while (o<3):  #or if there are no more edges
+
+            # Not sure what the next 2 are for
+            soli_pts.insert(count_sp, i) 
+            count_sp = count_sp+1 
+
+            # Finds the index of the point in the edges list
+            idx  = np.array(np.where(edges==target)[0])
+
+            # Check if there are other 
+            if len(idx)<1: 
+                break 
+
+            curr_edge = edges[idx[0],:] # This is the edge containing the point 
+
+            target_index = np.where(curr_edge==target)  # Find the index of the current point 
+            curr_edge  = np.delete(curr_edge, target_index) # Delete the current point in the smalle 
+            curr_edge = np.asscalar(curr_edge) # This is the edge containing 
+
+            edges  = np.delete(edges,idx[0],axis = 0) # Delete the edge from the edge list
+
+            target = curr_edge # Find the target  
+            o=dgree[target] # Define the new starting point by its index
+            edge_pts.insert(count_ep,target) 
+            count_ep = count_ep+1 
+
+            # Find a way to open the last one
+            ms = ms+1 
+
+            #if ms> min_ms: # control the size of the hair which is removed 
+                # only remove edges at the end 
+            #   break  
+
+# Update degree list
+dgree = []   
+for i in range(len(pts)): 
+    dgree.insert(i, np.count_nonzero(edges ==i ))
+
+edge_pts_cell = [] 
+j=0
+
+
+
+for i in range(len(edges)):
+    pt1= Point(np.hstack([pts[edges[i,0]],0]))
+    pt2 = Point(np.hstack([pts[edges[i,1]],0]))
+    create_line(pt1,pt2)
+
+'''
+while(len(edges)>0): 
+    for i in range(len(pts)): # i is the coordinate of the point to add
+        # edge_pts = [] 
+        if (dgree[i]==3):
+            o=0 
+            target=i # Point index
+            edge_pts = []  
+            edge_pts.insert(0,i)
+            while (o<3): # or if there are no more edges
+                # Finds the index of the point in the edges list
+                idx  = np.array(np.where(edges==target)[0])
+
+                # Check if there are other 
+                if len(idx)<1: 
+                    break 
+
+                curr_edge = edges[idx[0],:] # This is the edge containing the point 
+
+                target_index = np.where(curr_edge==target)  # Find the index of the current point 
+                curr_edge  = np.delete(curr_edge, target_index) # Delete the current point in the smalle 
+                curr_edge = np.asscalar(curr_edge) # This is the edge containing 
+
+                edges  = np.delete(edges,idx[0],axis = 0) # Delete the edge from the edge list                   
+                target = curr_edge # Find the target  
+                o=dgree[target] # Define the new starting point by its index
+                edge_pts.insert(count_ep,target) 
+                count_ep = count_ep+1 # Find a way to open the last one 
+
+            if len(edge_pts) >1:
+                edge_pts_cell.append(edge_pts)
+            j=j+1
+
+# Use contour pts and pts to find a list of distances
+
+pts_dist = [] 
+
+for i in range(len(pts)):
+    pts_dist.append(closest_node(pts[i,:], pts_list[contour_pts]))
+
+
+
+BezCurv(edge_pts_cell,pts)
+''' 
+
+app = vv.use()
+app.Run()

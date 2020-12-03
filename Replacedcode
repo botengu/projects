@@ -1,0 +1,62 @@
+# Find how to obtain the orientation of a strut 
+list_ = edge_pts_cell
+max_ang = 20*pi/180
+
+r = 0.45
+
+def dist(a,b):
+    return sqrt((b[0]-a[0])**2+(b[1]-a[1])**2)
+
+def Meta_Bez(x,y,list_,pts):
+    # Create list of breps
+    func = 0
+    tol = 0.2
+    for i in range(len(list_)):
+        # We calculate the coefficient for the r 
+        d=0 
+        array = [] 
+        for j in range(len(list_[i])):
+            coeff = abs(atan((pts[list_[i][-1],1]-pts[list_[i][0],1])/(pts[list_[i][-1],0]-pts[list_[i][0],0])))
+            coeff = pi/2 - coeff+ tol
+            #if (coeff>max_ang): 
+                #coeff=1
+            array.append([pts[list_[i][j],0],pts[list_[i][j],1]])
+            # Calculate the curve's length 
+            if(j<len(list_[i])-1):
+                d += dist(pts[list_[i][j],:],pts[list_[i][j+1],:] )
+        # Creating the bezier curve
+        Curve  = nBezier(array)
+        n = int(d)+1
+        t = np.linspace(0,1,n) 
+    
+        for  item in t:
+            pt = Curve.at(item)
+            func += coeff*(r)**2/((x-pt[0])**2 +(y-pt[1])**2)
+    return func
+
+bot_x = 0;  top_x = nelx; 
+bot_y = 0;  top_y = nely; 
+
+x = np.linspace(bot_x,top_x,2*top_x)
+y = np.linspace(bot_y,top_y,2*top_y)
+
+X, Y =  np.meshgrid(x, y)
+
+vol = Meta_Bez(X,Y,list_,pts)
+
+# Find contours at a constant value of 0.8
+contours = measure.find_contours(vol, 0.5)
+
+# Display the image and plot all contours found
+fig, ax = plt.subplots()
+ax.imshow(vol, cmap=plt.cm.gray)
+
+for n, contour in enumerate(contours):
+    ax.plot(contour[:, 1], contour[:, 0], linewidth=2)
+
+ax.axis('image')
+ax.set_xticks([])
+ax.set_yticks([])
+
+plt.show()
+#fig.savefig('caseStudy.png')
